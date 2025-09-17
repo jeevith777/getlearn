@@ -13,7 +13,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           days-before-stale: 0
-          days-before-close: 1
+          days-before-close: 0
           stale-pr-message: "This PR has been marked as stale due to inactivity. It will be closed if no further activity occurs."
           close-pr-message: "Closing this PR due to inactivity."
           only-pr-labels: ""       # optional: only PRs with some labels

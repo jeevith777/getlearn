@@ -1,9 +1,9 @@
-name: Close stale PRs into develop
+name: Close stale PRs
 
 on:
-  pull_request:
-    branches:
-      - int-blr
+  schedule:
+    - cron: "0 0 * * *"   # runs daily at midnight
+  workflow_dispatch:       # also allow manual trigger
 
 jobs:
   stale:
@@ -16,5 +16,5 @@ jobs:
           days-before-close: 1
           stale-pr-message: "This PR has been marked as stale due to inactivity. It will be closed if no further activity occurs."
           close-pr-message: "Closing this PR due to prolonged inactivity."
-          stale-issue-message: ""
+          stale-issue-message: ""    # we leave issues alone in this example
           close-issue-message: ""

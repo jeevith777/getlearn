@@ -1,0 +1,113 @@
+name: Close old version PRs
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - develop   # Only for PRs into develop
+  workflow_dispatch:   # 👈 Manual trigger support
+
+jobs:
+  close-older-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close older version PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const currentPr = context.payload.pull_request;
+
+            // If manually triggered, currentPr may not exist
+            let currentTitle = null;
+            if (currentPr) {
+              currentTitle = currentPr.title;
+            } else {
+              core.info("Manual run: scanning all open PRs in develop to find latest.");
+            }
+
+            // Regex to capture version numbers like 1.11.0 or 1.12.3
+            const versionRegex = /(\d+\.\d+\.\d+)/;
+            let currentVersion = null;
+
+            if (currentTitle) {
+              const match = currentTitle.match(versionRegex);
+              if (!match) {
+                core.info("No version found in PR title, skipping.");
+                return;
+              }
+              currentVersion = match[1];
+            }
+
+            // Get all open PRs into develop
+            const { data: pullRequests } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              base: "develop"
+            });
+
+            // --- Version comparison helpers ---
+            function normalizeParts(ver) {
+              const parts = ver.split(".").map(Number);
+              while (parts.length < 3) parts.push(0); // ensure [major, minor, patch]
+              return parts;
+            }
+
+            function compareVersions(a, b) {
+              const pa = normalizeParts(a);
+              const pb = normalizeParts(b);
+              for (let i = 0; i < 3; i++) {
+                if (pa[i] > pb[i]) return 1;
+                if (pa[i] < pb[i]) return -1;
+              }
+              return 0;
+            }
+            // ---------------------------------
+
+            // If manual trigger → find the latest PR automatically
+            if (!currentVersion) {
+              let latestPr = null;
+              for (const pr of pullRequests) {
+                const m = pr.title.match(versionRegex);
+                if (!m) continue;
+                const version = m[1];
+                if (!latestPr || compareVersions(version, latestPr.version) > 0) {
+                  latestPr = { number: pr.number, title: pr.title, version };
+                }
+              }
+
+              if (!latestPr) {
+                core.info("No PRs with versions found. Nothing to close.");
+                return;
+              }
+
+              currentVersion = latestPr.version;
+              core.info(`Manual run: treating PR #${latestPr.number} (${currentVersion}) as the latest.`);
+            }
+
+            for (const pr of pullRequests) {
+              if (currentPr && pr.number === currentPr.number) continue; // Skip current PR if auto-triggered
+
+              const m = pr.title.match(versionRegex);
+              if (!m) continue; // Skip PRs without version pattern
+
+              const version = m[1];
+
+              if (compareVersions(currentVersion, version) > 0) {
+                core.info(`Closing old PR #${pr.number} (${version})`);
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  state: "closed"
+                });
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: `⚠️ This PR has been closed because a newer version PR (${currentVersion}) exists.`
+                });
+              }
+            }

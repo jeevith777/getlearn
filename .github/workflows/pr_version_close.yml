@@ -1,0 +1,73 @@
+name: Close old version PRs
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - develop   # Only for PRs into develop
+
+jobs:
+  close-older-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close older version PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const currentPr = context.payload.pull_request;
+            const currentTitle = currentPr.title;
+
+            // Regex to capture version like 1.11.0, 1.12.3 etc.
+            const versionRegex = /update to (\d+\.\d+\.\d+)/;
+            const match = currentTitle.match(versionRegex);
+            if (!match) {
+              core.info("No version found in PR title, skipping.");
+              return;
+            }
+            const currentVersion = match[1];
+
+            // Get all open PRs into develop
+            const { data: pullRequests } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              base: "develop"
+            });
+
+            for (const pr of pullRequests) {
+              if (pr.number === currentPr.number) continue; // Skip current PR
+
+              const m = pr.title.match(versionRegex);
+              if (!m) continue; // Skip PRs without version pattern
+
+              const version = m[1];
+
+              // Compare versions (string split into numbers)
+              const newer = (a, b) => {
+                const pa = a.split(".").map(Number);
+                const pb = b.split(".").map(Number);
+                for (let i = 0; i < 3; i++) {
+                  if (pa[i] > pb[i]) return 1;
+                  if (pa[i] < pb[i]) return -1;
+                }
+                return 0;
+              };
+
+              if (newer(currentVersion, version) > 0) {
+                core.info(`Closing old PR #${pr.number} (${version})`);
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  state: "closed"
+                });
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: `⚠️ This PR has been closed because a newer version PR (${currentVersion}) was created.`
+                });
+              }
+            }
